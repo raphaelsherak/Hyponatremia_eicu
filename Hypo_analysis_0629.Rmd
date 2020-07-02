@@ -1,0 +1,917 @@
+---
+title: "HST"
+author: "Takahiro"
+date: "2019/11/5"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load dataset.
+
+```{r}
+dat <- read.csv("C:/Users/ogmcd/Dropbox/00_2019_Class/Fall/HST953/953-2019-team_f/data/hypo_dx.csv")
+```
+
+
+```{r}
+library(skimr)
+library(tidyverse)
+library(psych)
+library(MASS)
+library(tableone)
+library(mgcv)
+library(gridExtra)
+library(grid)
+```
+
+# Exprolatory Data Analyses
+We found some missing values in our dataset mainly in the laboratory values.
+
+```{r}
+dat %>% skim
+```
+
+```{r}
+dat %>% str
+dat %>% describe
+dat %>% head
+```
+
+```{r}
+dat$unitType %>% summary
+```
+
+
+```{r}
+dat.2 <- data.frame(dat)
+```
+
+
+```{r}
+dat.2 <-
+  mutate(dat.2, Male = if_else(gender == 1, true = "Yes", false = "No"))
+dat.2$Male <- as.factor(dat.2$Male)
+dat.2$Male <- relevel(dat.2$Male, ref="No")
+
+dat.2$Primary_diagnosis <- relevel(dat.2$Primary_diagnosis, ref="Metabolic/Electrolytes")
+dat.2$ethnicity <- relevel(dat.2$ethnicity, ref="Caucasian")
+dat.2$unitType <- relevel(dat.2$unitType, ref="Med-Surg ICU")
+
+dat.2$base_CHF <- as.factor(dat.2$base_CHF)
+dat.2$base_CKD <- as.factor(dat.2$base_CKD)
+dat.2$base_diabetes <- as.factor(dat.2$base_diabetes)
+dat.2$base_HIV <- as.factor(dat.2$base_HIV)
+dat.2$base_hypertension <- as.factor(dat.2$base_hypertension)
+dat.2$base_liver_f <- as.factor(dat.2$base_liver_f)
+dat.2$base_PAD <- as.factor(dat.2$base_PAD)
+dat.2$base_sepsis <- as.factor(dat.2$base_sepsis)
+dat.2$base_COPD <- as.factor(dat.2$base_COPD)
+dat.2$base_stroke <- as.factor(dat.2$base_stroke)
+dat.2$vent <- as.factor(dat.2$vent)
+
+dat.2$prior_diuretics <- 0
+dat.2[dat.2$had_bumetanide==1,]$prior_diuretics <- 1
+dat.2[dat.2$had_furosemide==1,]$prior_diuretics <- 1
+dat.2[dat.2$had_HCTZ==1,]$prior_diuretics <- 1
+dat.2[dat.2$had_torsemide==1,]$prior_diuretics <- 1
+dat.2$prior_diuretics <- as.factor(dat.2$prior_diuretics)
+
+dat.2$prior_neurl_dis <- 0
+dat.2[dat.2$base_coma==1,]$prior_neurl_dis <- 1
+dat.2[dat.2$base_other_coma==1,]$prior_neurl_dis <- 1
+dat.2[dat.2$base_other_para==1,]$prior_neurl_dis <- 1
+dat.2[dat.2$base_seizure==1,]$prior_neurl_dis <- 1
+dat.2$prior_neurl_dis <- as.factor(dat.2$prior_neurl_dis)
+
+dat.2$out_neurl_dis <- 0
+dat.2[dat.2$coma_disch==1,]$out_neurl_dis <- 1
+dat.2[dat.2$other_coma_disch==1,]$out_neurl_dis <- 1
+dat.2[dat.2$other_para_disch==1,]$out_neurl_dis <- 1
+dat.2[dat.2$seizure_disch==1,]$out_neurl_dis <- 1
+
+dat.2$prior_psy_dis <- 0
+dat.2[dat.2$base_bipolar==1,]$prior_psy_dis <- 1
+#dat.2[dat.2$base_scz==1,]$prior_psy_dis <- 1
+dat.2$prior_psy_dis <- as.factor(dat.2$prior_psy_dis)
+
+dat.2$prior_renal_f <- 0
+dat.2[dat.2$base_renal_f==1,]$prior_renal_f <- 1
+dat.2[dat.2$base_unspec_renal_f==1,]$prior_renal_f <- 1
+dat.2$prior_renal_f <- as.factor(dat.2$prior_renal_f)
+
+dat.2$ethnicity[dat.2$ethnicity=='Native American'] <- 'Other/Unknown'
+dat.2$ethnicity <- dat.2$ethnicity[, drop = TRUE]
+
+levels(dat.2$unitType) <- c(levels(dat.2$unitType), 'Cardiac')
+dat.2$unitType[dat.2$unitType=='Cardiac ICU'] <- 'Cardiac'
+dat.2$unitType[dat.2$unitType=='CCU-CTICU'] <- 'Cardiac'
+dat.2$unitType[dat.2$unitType=='CSICU'] <- 'Cardiac'
+dat.2$unitType[dat.2$unitType=='CTICU'] <- 'Cardiac'
+dat.2$unitType[dat.2$unitType=='Med-Surg ICU'] <- 'SICU'
+dat.2$unitType <- dat.2$unitType[, drop = TRUE]
+```
+
+
+```{r}
+drops.2 <- c('had_bumetanide','had_furosemide', 'had_HCTZ', 'had_torsemide', 'base_coma', 'base_other_coma',
+             'base_other_para', 'base_seizure', 'base_bipolar', 'base_SCZ', 'base_renal_f', 'base_unspec_renal_f',
+             'coma_disch', 'other_coma_disch', 'other_para_disch', 'seizure_disch', 'prior_renal_f',
+             'had_D5W', 'had_DDAVP', 'had_diuretics', 'gender', 'base_HIV', 'base_PAD', 'base_sepsis',
+             'prior_psy_dis')
+dat.2 <- dat.2[ , !(names(dat.2) %in% drops.2)]
+```
+
+```{r}
+dat.2 %>% skim()
+```
+
+Defined exposure as s[Na]+ change >6 (mmol/L).
+
+```{r}
+dat.2 <-
+  mutate(dat.2, exposure = if_else(change_over_6 == 1, true = 1, false = 0))
+```
+
+Defined hospital-free days, ICU-free days as x-free days within the first 28 days.
+Patients who died in the hospital were set to be 0 for both variables.
+
+```{r}
+dat.2 <-
+  mutate(dat.2, ICU_days = round(icu_los_hours/24) + 1)
+dat.2$ICU_days[dat.2$ICU_days > 28] <- 28
+dat.2 <-
+  mutate(dat.2, ICU_free_days = 28-ICU_days)
+dat.2$ICU_free_days[dat.2$hosp_mortality > 0] <- 0
+dat.2$ICU_free_days %>% summary
+
+dat.2 <-
+  mutate(dat.2, hos_days = round(hos_los_hours/24) + 1)
+dat.2$hos_days[dat.2$hos_days > 28] <- 28
+dat.2 <-
+  mutate(dat.2, hos_free_days = 28-hos_days)
+dat.2$hos_free_days[dat.2$hosp_mortality > 0] <- 0
+dat.2$hos_free_days %>% summary
+```
+
+Dropped unnecessary columns.
+
+```{r}
+drops.3 <- c('icu_los_hours','hos_los_hours', 'hos_days', 'ICU_days', 'unitdischargelocation', 'change_over_6')
+dat.3 <- dat.2[ , !(names(dat.2) %in% drops.2)]
+```
+
+
+```{r}
+covariates <- c('base_CHF', 'base_CKD', 'base_COPD', 'base_diabetes', ' base_hypertension', 'base_liver_f', 
+                'base_stroke', 'ethnicity', 'Male','Primary_diagnosis', 'prior_diuretics', 'prior_neurl_dis',
+                'unitType', 'vent', 'age', 'albumin', 'ALT', 'apachescore', 'AST', 'base_sodium',
+                'bicarbonate', 'BUN', 'creatinine', 'GCS', 'glucose', 'magnesium', 'phosphate', 'potassium',
+                'tbili')
+outcome <- c('ICU_free_days', 'hos_free_days', 'hosp_mortality', 'out_neurl_dis')
+```
+
+```{r}
+tab1 <- CreateTableOne(vars = c(covariates, outcome), strata = "exposure", data = dat.3)
+print(tab1, smd=TRUE)
+```
+
+Distribution in the final dataset.
+
+```{r}
+names(dat.3)
+skim(dat.3)
+```
+
+# Generalized Additive Models
+
+First we took a look at a histogram of serum sodium level on admission.
+
+```{r}
+hist(dat.3$base_sodium)
+```
+
+We conducted the GAM to explore associations between sodium increase and primary and secondary outcomes in the entire dataset.
+
+## GAMs
+Generalized additive models using initial serum sodium and age as continuous variables and sex as categorical variable.
+We obtained predicted values from GAMs.
+
+```{r}
+get.predict.df <- function(df){
+  
+  # Create grid for prediction
+  sod.dif.seq <- seq(0, 25, length=251)
+  predict.df <- data.frame(sodium_change=sod.dif.seq, age=48, Male="No")
+  
+  # Generalized additive model for in-hospital mortality
+  gam.hosp <- gam(hosp_mortality ~ s(sodium_change) + s(age) + Male,
+                  data = df, family=binomial(link='logit'), method='REML')
+  
+  # Obtain predicted in-hospital mortality and 95% CI for a 48-year-old female
+  preds.hosp <- predict(gam.hosp, type="link", newdata=predict.df, se.fit=TRUE)
+  fit.hosp <- preds.hosp$fit
+  fit.hosp.low95 <- fit.hosp - 1.96 * preds.hosp$se.fit
+  fit.hosp.up95 <- fit.hosp + 1.96 * preds.hosp$se.fit
+  
+  # Convert Log odds to probability
+  predict.df$hosp <- 100*(exp(fit.hosp)/(1 + exp(fit.hosp)))
+  predict.df$hosp.low95 <- 100*(exp(fit.hosp.low95)/(1 + exp(fit.hosp.low95)))
+  predict.df$hosp.up95 <- 100*(exp(fit.hosp.up95)/(1 + exp(fit.hosp.up95)))
+  
+  # Generalized additive model for neurological complication
+  gam.neur <- gam(out_neurl_dis ~ s(sodium_change) + s(age) + Male,
+                  data = df, family=binomial(link='logit'), method='REML')
+  
+  # Obtain predicted neurological complication rate and 95% CI for a 48-year-old female
+  preds.neur <- predict(gam.neur, type="link", newdata=predict.df, se.fit=TRUE)
+  fit.neur <- preds.neur$fit
+  fit.neur.low95 <- fit.neur - 1.96 * preds.neur$se.fit
+  fit.neur.up95 <- fit.neur + 1.96 * preds.neur$se.fit
+  
+  # Convert Log odds to probability
+  predict.df$neur <- 100*(exp(fit.neur)/(1 + exp(fit.neur)))
+  predict.df$neur.low95 <- 100*(exp(fit.neur.low95)/(1 + exp(fit.neur.low95)))
+  predict.df$neur.up95 <- 100*(exp(fit.neur.up95)/(1 + exp(fit.neur.up95)))
+  
+  # Generalized additive model for hospital-free days
+  gam.hos.fr <- gam(hos_free_days ~ s(sodium_change) + s(age) + Male,
+                    data = df, method='REML')
+
+  # Obtain predicted hospital-free days and 95% CI for a 48-year-old female
+  preds.hos.fr <- predict(gam.hos.fr, type="link", newdata=predict.df, se.fit=TRUE)
+  predict.df$hos.fr <- preds.hos.fr$fit
+  predict.df$hos.fr.low95 <- preds.hos.fr$fit - 1.96 * preds.hos.fr$se.fit
+  predict.df$hos.fr.up95 <- preds.hos.fr$fit + 1.96 * preds.hos.fr$se.fit
+  
+  # Generalized additive model for ICU-free days
+  gam.ICU.fr <- gam(ICU_free_days ~ s(sodium_change) + s(age) + Male,
+                    data = df, method='REML')
+
+  # Obtain predicted ICU-free days and 95% CI for a 48-year-old female
+  preds.ICU.fr <- predict(gam.ICU.fr, type="link", newdata=predict.df, se.fit=TRUE)
+  predict.df$ICU.fr <- preds.ICU.fr$fit
+  predict.df$ICU.fr.low95 <- preds.ICU.fr$fit - 1.96 * preds.ICU.fr$se.fit
+  predict.df$ICU.fr.up95 <- preds.ICU.fr$fit + 1.96 * preds.ICU.fr$se.fit
+  
+  return(predict.df)
+}
+```
+
+
+```{r}
+predict.all <- get.predict.df(dat.3)
+```
+
+## Plots
+
+```{r}
+get.four.plots <- function(df){
+  hosp.spline <- ggplot(df, aes(x = sodium_change, y = hosp)) +
+  geom_ribbon(aes(ymin = hosp.low95,
+                  ymax = hosp.up95,
+                  fill = hosp.up95 > hosp.low95),
+              alpha = 0.5) +
+  geom_line() +
+  scale_fill_manual(values="grey") +
+  guides(fill = FALSE) +
+  theme_bw() +
+  xlim(0, 25) +
+  ylim(0, 60) +
+  xlab('Serum [Na+] correction rate (mmol/L/day)') +
+  theme(axis.title.x = element_text(size = 14)) +
+  theme(axis.text.x = element_text(size = 12)) +
+  ylab('In-hospital mortality (%)') +
+  theme(axis.title.y = element_text(size = 14)) +
+  theme(axis.text.y = element_text(size = 12))
+  
+  neur.spline <- ggplot(df, aes(x = sodium_change, y = neur)) +
+  geom_ribbon(aes(ymin = neur.low95,
+                  ymax = neur.up95,
+                  fill = neur.up95 > neur.low95),
+              alpha = 0.5) +
+  geom_line() +
+  scale_fill_manual(values="grey") +
+  guides(fill = FALSE) +
+  theme_bw() +
+  xlim(0, 25) +
+  ylim(0, 60) +
+  xlab('Serum [Na+] correction rate (mmol/L/day)') +
+  theme(axis.title.x = element_text(size = 14)) +
+  theme(axis.text.x = element_text(size = 12)) +
+  ylab('Neurological complication rate (%)') +
+  theme(axis.title.y = element_text(size = 14)) +
+  theme(axis.text.y = element_text(size = 12))
+  
+  hos.fr.spline <- ggplot(df, aes(x = sodium_change, y = hos.fr)) +
+  geom_ribbon(aes(ymin = hos.fr.low95,
+                  ymax = hos.fr.up95,
+                  fill = hos.fr.up95 > hos.fr.low95),
+              alpha = 0.5) +
+  geom_line() +
+  scale_fill_manual(values="grey") +
+  guides(fill = FALSE) +
+  theme_bw() +
+  xlim(0, 25) +
+  xlab('Serum [Na+] correction rate (mmol/L/day)') +
+  theme(axis.title.x = element_text(size = 14)) +
+  theme(axis.text.x = element_text(size = 12)) +
+  scale_y_continuous(breaks = seq(0, 28, 7), limits = c(0, 28)) +
+  ylab('Hospital-free days (day)') +
+  theme(axis.title.y = element_text(size = 14)) +
+  theme(axis.text.y = element_text(size = 12))
+  
+  ICU.fr.spline <- ggplot(df, aes(x = sodium_change, y = ICU.fr)) +
+  geom_ribbon(aes(ymin = ICU.fr.low95,
+                  ymax = ICU.fr.up95,
+                  fill = ICU.fr.up95 > ICU.fr.low95),
+              alpha = 0.5) +
+  geom_line() +
+  scale_fill_manual(values="grey") +
+  guides(fill = FALSE) +
+  theme_bw() +
+  xlim(0, 25) +
+  xlab('Serum [Na+] correction rate (mmol/L/day)') +
+  theme(axis.title.x = element_text(size = 14)) +
+  theme(axis.text.x = element_text(size = 12)) +
+  scale_y_continuous(breaks = seq(0, 28, 7), limits = c(0, 28)) +
+  ylab('ICU-free days (day)') +
+  theme(axis.title.y = element_text(size = 14)) +
+  theme(axis.text.y = element_text(size = 12))
+  
+  return(list(hosp.spline, neur.spline, hos.fr.spline, ICU.fr.spline))
+}
+```
+
+
+```{r}
+all.plots <- get.four.plots(predict.all)
+
+all.spline <- grid.arrange(
+  all.plots[[1]],
+  all.plots[[2]],
+  all.plots[[3]],
+  all.plots[[4]],
+  nrow = 2,
+  top=textGrob("Entire Population (n=1024)", gp=gpar(fontsize=18))
+)
+
+all.spline
+
+ggsave("All_spline.png", all.spline, height = 8 , width = 12, dpi=600)
+```
+
+
+## Multiple Imputation
+We performed multiple imputation using 'mice' package. For continuous variables, we used Bayesian linear regression. For binary variable we used logistic regression.
+Imputation was conducted 100 times. Max iteration was set as 50.
+
+```{r}
+library(mice)
+library(miceadds)
+```
+
+```{r}
+imp.meth = c('', '', '', '', '', 'logreg', 'norm', 'norm', '', '', '', 'norm', 'norm', 'norm', 'norm', 'norm', 
+             'norm', 'norm', '', 'norm', 'norm', 'norm', '', '', '', '', '', '', '', '', '', '', '', 
+             '', '', '', '', '', '', '', '', '')
+dat.imp <- mice(dat.3, m=100, maxit=50, meth=imp.meth, seed=953)
+```
+
+```{r}
+imp.1 <- complete(dat.imp,1)
+names(imp.1)
+```
+
+Note: This chunk saves all imputed datasets to csv files.
+
+```{r}
+for (i in 1:100)
+{
+   write.csv(complete(dat.imp, i), file=paste("imp", i, ".csv", sep=""))
+}
+```
+
+# Analyses in each dataset
+## Marginal Structural Model of Inverse Probability of Treatment Weighting
+## Parametric g-formula
+## Outcome Regression Conditional on Propensity Score
+
+We conducted IPTW to obtain marginal average treatment effect.
+For sensitivity analyses, we also performed g-formula and logistic/linear regression conditioning on propensity score.
+Point estimates and variances of average treatment effects (marginal or conditional on propensity score) were obtained using 1000 times bootstrap for each imputed dataset.
+We pooled the means and variances of average treatment effects across the 100 imputed datasets and estimated average treatment effects and their 95% confidence intervals.
+Thus, we used linear regression regardless of the types of outcomes.
+
+
+```{r}
+length(imp.1$base_sodium[imp.1$base_sodium>115])
+length(imp.1$base_sodium[imp.1$base_sodium<=115])
+```
+```{r}
+psmod<-glm(exposure ~ Primary_diagnosis + age + ethnicity + unitType + vent
+                     + GCS + apachescore + glucose + BUN + AST + tbili + magnesium + potassium
+                     + phosphate + albumin + bicarbonate + base_hypertension + base_CKD + base_CHF + base_liver_f
+                     + base_diabetes + base_COPD + base_stroke + base_sodium + Male + prior_diuretics
+                     + prior_neurl_dis + base_sodium:base_CHF + base_sodium:base_CKD
+                     + base_sodium:base_liver_f + base_sodium:base_diabetes + base_sodium:base_stroke
+                     + base_sodium:prior_neurl_dis,
+           data=imp.1, family="binomial")
+imp.1$pscore <- fitted(psmod)
+
+  # Create Weights
+  
+imp.1$IPTW<-ifelse(imp.1$exposure==1, 1/imp.1$pscore, 1/(1-imp.1$pscore))
+
+EMM.hosp <- lm(hosp_mortality ~ exposure*severe, data=imp.1, weights=IPTW)
+
+EMM.hosp %>% summary
+
+EMM.hosp$coefficients[4]
+
+```
+
+
+
+```{r}
+library(modelr)
+```
+
+First, we created a function to bootstrap n_iter times and conduct three main analyses and one subgroup analysis in each resampled dataset.
+
+```{r}
+get.boot.results <- function(df, n_iter) {
+  
+df <-
+  mutate(df, severe = if_else(base_sodium > 115, true = 0, false = 1))  
+
+  
+  RD.hosp.i <- as.vector(NULL); RD.neur.i <- as.vector(NULL); RD.hosfree.i <- as.vector(NULL); RD.ICUfree.i <- as.vector(NULL)
+  
+  RD.hosp.p <- as.vector(NULL); RD.neur.p <- as.vector(NULL); RD.hosfree.p <- as.vector(NULL); RD.ICUfree.p <- as.vector(NULL)
+  
+  RD.hosp.g <- as.vector(NULL); RD.neur.g <- as.vector(NULL); RD.hosfree.g <- as.vector(NULL); RD.ICUfree.g <- as.vector(NULL)
+  
+  EMM.hosp.i <- as.vector(NULL); EMM.neur.i <- as.vector(NULL); EMM.hosfree.i <- as.vector(NULL); EMM.ICUfree.i <- as.vector(NULL)
+
+
+for (i in 1:n_iter){
+  
+  # Bootstrap resample
+  
+  resample.data <- resample_bootstrap(df)
+  resample.df <- as.data.frame(resample.data)
+  
+  
+  # Calculate Propensity Score
+  
+  psmod.re<-glm(exposure ~ Primary_diagnosis + age + ethnicity + unitType + vent
+                     + GCS + apachescore + glucose + BUN + AST + tbili + magnesium + potassium
+                     + phosphate + albumin + bicarbonate + base_hypertension + base_CKD + base_CHF + base_liver_f
+                     + base_diabetes + base_COPD + base_stroke + base_sodium + Male + prior_diuretics
+                     + prior_neurl_dis + base_sodium:base_CHF + base_sodium:base_CKD
+                     + base_sodium:base_liver_f + base_sodium:base_diabetes + base_sodium:base_stroke
+                     + base_sodium:prior_neurl_dis,
+           data=resample.df, family="binomial")
+  resample.df$pscore <- fitted(psmod.re)
+
+  # Create Weights
+  
+  resample.df$IPTW<-ifelse(resample.df$exposure==1, 1/resample.df$pscore, 1/(1-resample.df$pscore))
+
+  # Fit MSM
+  
+  msm.hosp.re <- lm(hosp_mortality ~ exposure, data=resample.df, weights=IPTW)
+  RD.hosp.i[[i]] <- msm.hosp.re$coefficients[2]
+
+  msm.neur.re <- lm(out_neurl_dis ~ exposure, data=resample.df, weights=IPTW)
+  RD.neur.i[[i]] <- msm.neur.re$coefficients[2]
+
+  msm.hosfree.re <- lm(hos_free_days ~ exposure, data=resample.df, weights=IPTW)
+  RD.hosfree.i[[i]] <- msm.hosfree.re$coefficients[2]
+
+  msm.ICUfree.re <- lm(ICU_free_days ~ exposure, data=resample.df, weights=IPTW)
+  RD.ICUfree.i[[i]] <- msm.ICUfree.re$coefficients[2]
+  
+  # PS model
+  
+  resample.df$dec <- cut(resample.df$pscore, 
+                        breaks=c(quantile(resample.df$pscore, probs=seq(0,1,0.1))),
+                        include.lowest=TRUE)
+
+  # Fit outcome regression model
+  
+  out.hosp.re <- lm(hosp_mortality ~ exposure + as.factor(dec), data=resample.df)
+  RD.hosp.p[[i]] <- out.hosp.re$coefficients[2]
+
+  out.neur.re <- lm(out_neurl_dis ~ exposure + as.factor(dec), data=resample.df)
+  RD.neur.p[[i]] <- out.neur.re$coefficients[2]
+
+  out.hosfree.re <- lm(hos_free_days ~ exposure + as.factor(dec), data=resample.df)
+  RD.hosfree.p[[i]] <- out.hosfree.re$coefficients[2]
+
+  out.ICUfree.re <- lm(ICU_free_days ~ exposure + as.factor(dec), data=resample.df)
+  RD.ICUfree.p[[i]] <- out.ICUfree.re$coefficients[2]
+  
+  
+  # g-formula
+  
+  resample.df$interv <- -1
+  d0 <- resample.df # 2nd copy: treatment set to 0, outcome to missing
+  d0$interv <- 0
+  d0$exposure <- 0
+  d0$hosp_mortality <- NA
+  d0$out_neurl_dis <- NA
+  d0$hos_free_days <- NA
+  d0$ICU_free_days <- NA
+  d1 <- resample.df # 3rd copy: treatment set to 1, outcome to missing
+  d1$interv <- 1
+  d1$exposure <- 1
+  d1$hosp_mortality <- NA
+  d1$out_neurl_dis <- NA
+  d1$hos_free_days <- NA
+  d1$ICU_free_days <- NA
+  d.onesample <- rbind(resample.df, d0, d1)
+  
+  g.hosp.re <- glm(hosp_mortality ~ exposure + age + vent + GCS + apachescore + BUN + potassium + albumin
+                   + base_CHF + base_sodium + prior_neurl_dis, data=d.onesample, family=binomial)
+  
+  g.neur.re <- glm(out_neurl_dis ~ exposure + age + vent + GCS + apachescore + BUN + potassium + albumin
+                   + base_CHF + base_sodium + prior_neurl_dis, data=d.onesample, family=binomial)
+  
+
+  g.hosfree.re <- lm(hos_free_days ~ exposure + Primary_diagnosis + age + ethnicity + unitType + vent
+                     + GCS + apachescore + glucose + BUN + AST + tbili + magnesium + potassium
+                     + phosphate + albumin + bicarbonate + base_hypertension + base_CKD + base_CHF + base_liver_f
+                     + base_diabetes + base_COPD + base_stroke + base_sodium + Male + prior_diuretics
+                     + prior_neurl_dis + base_sodium:base_CHF + base_sodium:base_CKD
+                     + base_sodium:base_liver_f + base_sodium:base_diabetes + base_sodium:base_stroke
+                     + base_sodium:prior_neurl_dis,
+                     data=d.onesample)
+  
+  g.ICUfree.re <- lm(ICU_free_days ~ exposure + Primary_diagnosis + age + ethnicity + unitType + vent
+                     + GCS + apachescore + glucose + BUN + AST + tbili + magnesium + potassium
+                     + phosphate + albumin + bicarbonate + base_hypertension + base_CKD + base_CHF + base_liver_f
+                     + base_diabetes + base_COPD + base_stroke + base_sodium + Male + prior_diuretics
+                     + prior_neurl_dis + base_sodium:base_CHF + base_sodium:base_CKD
+                     + base_sodium:base_liver_f + base_sodium:base_diabetes + base_sodium:base_stroke
+                     + base_sodium:prior_neurl_dis,
+                     data=d.onesample)
+  
+  d.onesample$prob.hosp <- predict(g.hosp.re, d.onesample, type="response")
+  d.onesample$prob.neur <- predict(g.neur.re, d.onesample, type="response")
+  d.onesample$hosfree <- predict(g.hosfree.re, d.onesample)
+  d.onesample$ICUfree <- predict(g.ICUfree.re, d.onesample)
+
+  RD.hosp.g[[i]] <- mean(d.onesample$prob.hosp[d.onesample$interv==1])-
+    mean(d.onesample$prob.hosp[d.onesample$interv==0])
+  RD.neur.g[[i]] <- mean(d.onesample$prob.neur[d.onesample$interv==1])-
+    mean(d.onesample$prob.neur[d.onesample$interv==0])
+  RD.hosfree.g[[i]] <- mean(d.onesample$hosfree[d.onesample$interv==1])-
+    mean(d.onesample$hosfree[d.onesample$interv==0])
+  RD.ICUfree.g[[i]] <- mean(d.onesample$ICUfree[d.onesample$interv==1])-
+    mean(d.onesample$ICUfree[d.onesample$interv==0])
+  
+  
+  #EMM based on IP weighting
+  EMM.hosp.re <- lm(hosp_mortality ~ exposure*severe, data=resample.df, weights=IPTW)
+  EMM.hosp.i[[i]] <- EMM.hosp.re$coefficients[4]
+
+  EMM.neur.re <- lm(out_neurl_dis ~ exposure*severe, data=resample.df, weights=IPTW)
+  EMM.neur.i[[i]] <- EMM.neur.re$coefficients[4]
+
+  EMM.hosfree.re <- lm(hos_free_days ~ exposure*severe, data=resample.df, weights=IPTW)
+  EMM.hosfree.i[[i]] <- EMM.hosfree.re$coefficients[4]
+
+  EMM.ICUfree.re <- lm(ICU_free_days ~ exposure*severe, data=resample.df, weights=IPTW)
+  EMM.ICUfree.i[[i]] <- EMM.ICUfree.re$coefficients[4]
+
+}
+  
+# Store means and variances of outcomes to dataframe object
+  
+results <- data.frame(RD.hosp.i.mean=mean(RD.hosp.i), RD.hosp.i.var=var(RD.hosp.i),
+                      RD.neur.i.mean=mean(RD.neur.i), RD.neur.i.var=var(RD.neur.i), 
+                      RD.hosfree.i.mean=mean(RD.hosfree.i), RD.hosfree.i.var=var(RD.hosfree.i), 
+                      RD.ICUfree.i.mean=mean(RD.ICUfree.i), RD.ICUfree.i.var=var(RD.ICUfree.i),
+                      RD.hosp.p.mean=mean(RD.hosp.p), RD.hosp.p.var=var(RD.hosp.p),
+                      RD.neur.p.mean=mean(RD.neur.p), RD.neur.p.var=var(RD.neur.p), 
+                      RD.hosfree.p.mean=mean(RD.hosfree.p), RD.hosfree.p.var=var(RD.hosfree.p), 
+                      RD.ICUfree.p.mean=mean(RD.ICUfree.p), RD.ICUfree.p.var=var(RD.ICUfree.p),
+                      RD.hosp.g.mean=mean(RD.hosp.g), RD.hosp.g.var=var(RD.hosp.g),
+                      RD.neur.g.mean=mean(RD.neur.g), RD.neur.g.var=var(RD.neur.g), 
+                      RD.hosfree.g.mean=mean(RD.hosfree.g), RD.hosfree.g.var=var(RD.hosfree.g), 
+                      RD.ICUfree.g.mean=mean(RD.ICUfree.g), RD.ICUfree.g.var=var(RD.ICUfree.g),
+                      EMM.hosp.i.mean=mean(EMM.hosp.i), EMM.hosp.i.var=var(EMM.hosp.i),
+                      EMM.neur.i.mean=mean(EMM.neur.i), EMM.neur.i.var=var(EMM.neur.i),
+                      EMM.hosfree.i.mean=mean(EMM.hosfree.i), EMM.hosfree.i.var=var(EMM.hosfree.i), 
+                      EMM.ICUfree.i.mean=mean(EMM.ICUfree.i), EMM.ICUfree.i.var=var(EMM.ICUfree.i))
+return(results)
+}
+```
+
+
+Actual 1000 times bootstrap for 100 imputed datasets.
+Note: This chunk may take few hours.
+
+```{r}
+set.seed(953)
+time1 <- Sys.time()
+
+n_imputation <- 100
+
+RD.hosp.i.mean.imp <- rep(NA, n_imputation); RD.neur.i.mean.imp <- rep(NA, n_imputation); RD.hosfree.i.mean.imp <- rep(NA, n_imputation); RD.ICUfree.i.mean.imp <- rep(NA, n_imputation)
+
+RD.hosp.i.var.imp <- rep(NA, n_imputation); RD.neur.i.var.imp <- rep(NA, n_imputation); RD.hosfree.i.var.imp <- rep(NA, n_imputation); RD.ICUfree.i.var.imp <- rep(NA, n_imputation)
+
+RD.hosp.p.mean.imp <- rep(NA, n_imputation); RD.neur.p.mean.imp <- rep(NA, n_imputation); RD.hosfree.p.mean.imp <- rep(NA, n_imputation); RD.ICUfree.p.mean.imp <- rep(NA, n_imputation)
+
+RD.hosp.p.var.imp <- rep(NA, n_imputation); RD.neur.p.var.imp <- rep(NA, n_imputation); RD.hosfree.p.var.imp <- rep(NA, n_imputation); RD.ICUfree.p.var.imp <- rep(NA, n_imputation)
+  
+RD.hosp.g.mean.imp <- rep(NA, n_imputation); RD.neur.g.mean.imp <- rep(NA, n_imputation); RD.hosfree.g.mean.imp <- rep(NA, n_imputation); RD.ICUfree.g.mean.imp <- rep(NA, n_imputation)
+
+RD.hosp.g.var.imp <- rep(NA, n_imputation); RD.neur.g.var.imp <- rep(NA, n_imputation); RD.hosfree.g.var.imp <- rep(NA, n_imputation); RD.ICUfree.g.var.imp <- rep(NA, n_imputation)
+
+EMM.hosp.i.mean.imp <- rep(NA, n_imputation); EMM.neur.i.mean.imp <- rep(NA, n_imputation); EMM.hosfree.i.mean.imp <- rep(NA, n_imputation); EMM.ICUfree.i.mean.imp <- rep(NA, n_imputation)
+
+EMM.hosp.i.var.imp <- rep(NA, n_imputation); EMM.neur.i.var.imp <- rep(NA, n_imputation); EMM.hosfree.i.var.imp <- rep(NA, n_imputation); EMM.ICUfree.i.var.imp <- rep(NA, n_imputation)
+
+for (i in 1:n_imputation){
+  imp <- complete(dat.imp,i)
+  results.imp <- get.boot.results(imp, 1000)
+  
+  RD.hosp.i.mean.imp[i] <- results.imp[[1]]
+  RD.hosp.i.var.imp[i] <- results.imp[[2]]
+  RD.neur.i.mean.imp[i] <- results.imp[[3]]
+  RD.neur.i.var.imp[i] <- results.imp[[4]]
+  RD.hosfree.i.mean.imp[i] <- results.imp[[5]]
+  RD.hosfree.i.var.imp[i] <- results.imp[[6]]
+  RD.ICUfree.i.mean.imp[i] <- results.imp[[7]]
+  RD.ICUfree.i.var.imp[i] <- results.imp[[8]]
+  
+  RD.hosp.p.mean.imp[i] <- results.imp[[9]]
+  RD.hosp.p.var.imp[i] <- results.imp[[10]]
+  RD.neur.p.mean.imp[i] <- results.imp[[11]]
+  RD.neur.p.var.imp[i] <- results.imp[[12]]
+  RD.hosfree.p.mean.imp[i] <- results.imp[[13]]
+  RD.hosfree.p.var.imp[i] <- results.imp[[14]]
+  RD.ICUfree.p.mean.imp[i] <- results.imp[[15]]
+  RD.ICUfree.p.var.imp[i] <- results.imp[[16]]
+  
+  RD.hosp.g.mean.imp[i] <- results.imp[[17]]
+  RD.hosp.g.var.imp[i] <- results.imp[[18]]
+  RD.neur.g.mean.imp[i] <- results.imp[[19]]
+  RD.neur.g.var.imp[i] <- results.imp[[20]]
+  RD.hosfree.g.mean.imp[i] <- results.imp[[21]]
+  RD.hosfree.g.var.imp[i] <- results.imp[[22]]
+  RD.ICUfree.g.mean.imp[i] <- results.imp[[23]]
+  RD.ICUfree.g.var.imp[i] <- results.imp[[24]]
+  
+  EMM.hosp.i.mean.imp[i] <- results.imp[[25]]
+  EMM.hosp.i.var.imp[i] <- results.imp[[26]]
+  EMM.neur.i.mean.imp[i] <- results.imp[[27]]
+  EMM.neur.i.var.imp[i] <- results.imp[[28]]
+  EMM.hosfree.i.mean.imp[i] <- results.imp[[29]]
+  EMM.hosfree.i.var.imp[i] <- results.imp[[30]]
+  EMM.ICUfree.i.mean.imp[i] <- results.imp[[31]]
+  EMM.ICUfree.i.var.imp[i] <- results.imp[[32]]
+}
+
+time2 <- Sys.time()
+difftime(time2, time1, units='mins')
+```
+
+Function to obtain pooled point estimates and confidence intervals using Rubin's rule.
+
+```{r}
+get.mean.confint <- function(mean.imp, var.imp, n_imputation){
+  ATE <- mean(mean.imp)
+  WM <- mean(var.imp)
+  sigma <- as.vector(NULL)
+  for (i in 1:n_imputation){
+    sigma[[i]] <- (mean.imp[[i]] - ATE)^2
+  }
+  BM <- sum(sigma)/(n_imputation - 1)
+  TM <- WM + (1+(1/n_imputation))*BM
+  se <- sqrt(TM)
+  ll <- ATE - qnorm(0.975)*se
+  ul <- ATE + qnorm(0.975)*se
+  result.df <- data.frame(ATE, ll, ul, se)
+  return(result.df)
+}
+```
+
+Obtain results.
+
+```{r}
+result.hosp.i <- get.mean.confint(RD.hosp.i.mean.imp, RD.hosp.i.var.imp, n_imputation)
+result.hosp.p <- get.mean.confint(RD.hosp.p.mean.imp, RD.hosp.p.var.imp, n_imputation)
+result.hosp.g <- get.mean.confint(RD.hosp.g.mean.imp, RD.hosp.g.var.imp, n_imputation)
+result.hosp.emm <- get.mean.confint(EMM.hosp.i.mean.imp, EMM.hosp.i.var.imp, n_imputation)
+
+result.neur.i <- get.mean.confint(RD.neur.i.mean.imp, RD.neur.i.var.imp, n_imputation)
+result.neur.p <- get.mean.confint(RD.neur.p.mean.imp, RD.neur.p.var.imp, n_imputation)
+result.neur.g <- get.mean.confint(RD.neur.g.mean.imp, RD.neur.g.var.imp, n_imputation)
+result.neur.emm <- get.mean.confint(EMM.neur.i.mean.imp, EMM.neur.i.var.imp, n_imputation)
+
+result.hosfree.i <- get.mean.confint(RD.hosfree.i.mean.imp, RD.hosfree.i.var.imp, n_imputation)
+result.hosfree.p <- get.mean.confint(RD.hosfree.p.mean.imp, RD.hosfree.p.var.imp, n_imputation)
+result.hosfree.g <- get.mean.confint(RD.hosfree.g.mean.imp, RD.hosfree.g.var.imp, n_imputation)
+result.hosfree.emm <- get.mean.confint(EMM.hosfree.i.mean.imp, EMM.hosfree.i.var.imp, n_imputation)
+
+result.ICUfree.i <- get.mean.confint(RD.ICUfree.i.mean.imp, RD.ICUfree.i.var.imp, n_imputation)
+result.ICUfree.p <- get.mean.confint(RD.ICUfree.p.mean.imp, RD.ICUfree.p.var.imp, n_imputation)
+result.ICUfree.g <- get.mean.confint(RD.ICUfree.g.mean.imp, RD.ICUfree.g.var.imp, n_imputation)
+result.ICUfree.emm <- get.mean.confint(EMM.ICUfree.i.mean.imp, EMM.ICUfree.i.var.imp, n_imputation)
+```
+
+Note: Obtained values are point estimate, lower 95% confidence interval, upper 95% confidence interval, and standard error.
+
+```{r}
+result.hosp.i; result.hosp.p; result.hosp.g
+```
+
+```{r}
+result.neur.i; result.neur.p; result.neur.g
+```
+
+```{r}
+result.hosfree.i; result.hosfree.p; result.hosfree.g
+```
+
+```{r}
+result.ICUfree.i; result.ICUfree.p; result.ICUfree.g
+```
+
+
+```{r}
+result.hosp.emm
+chi.hosp.emm <- (result.hosp.emm[[1]]/result.hosp.emm[[4]])^2
+
+result.neur.emm
+chi.neur.emm <- (result.neur.emm[[1]]/result.neur.emm[[4]])^2
+
+result.hosfree.emm
+chi.hosfree.emm <- (result.hosfree.emm[[1]]/result.hosfree.emm[[4]])^2
+
+result.ICUfree.emm
+chi.ICUfree.emm <- (result.ICUfree.emm[[1]]/result.ICUfree.emm[[4]])^2
+```
+
+
+```{r}
+p_val.hosp <- pchisq(chi.hosp.emm, df = 1, lower.tail = FALSE); p_val.hosp
+
+p_val.neur <- pchisq(chi.neur.emm, df = 1, lower.tail = FALSE); p_val.neur
+
+p_val.hosfree <- pchisq(chi.hosfree.emm, df = 1, lower.tail = FALSE); p_val.hosfree
+
+p_val.ICUfree <- pchisq(chi.ICUfree.emm, df = 1, lower.tail = FALSE); p_val.ICUfree
+```
+
+
+# Create Forest Plots
+
+```{r}
+method.hosp <- c('IP Weighting', 'Ps adjustment', 'g-formula')
+beta.hosp <- c(-3.01, -2.74, -3.28)
+Lower.limit.hosp <- c(-7.07, -6.50, -6.98)
+Upper.limit.hosp <- c(1.05, 1.02, 0.42)
+df.hosp <- data.frame(Method=method.hosp, beta=beta.hosp,
+                        Lower_limit=Lower.limit.hosp, Upper_limit=Upper.limit.hosp)
+
+df.hosp$Method <- relevel(df.hosp$Method, ref='Ps adjustment')
+```
+
+
+```{r}
+hosp.plot = ggplot(data=df.hosp,
+    aes(x = Method,y = beta, ymin = Lower_limit, ymax = Upper_limit ))+
+    geom_pointrange(aes(col=Method))+
+    geom_hline(aes(fill=Method),yintercept =0, linetype=2)+
+    xlab("")+
+    ylim(-8, 8)+
+    geom_errorbar(aes(ymin=Lower_limit, ymax=Upper_limit,col=Method),width=0.2,cex=1)+ 
+    theme(plot.title=element_text(size=16, color='black'),
+        axis.text.y=element_text(size=16, color='black'),
+        axis.ticks.y=element_blank(),
+        axis.text.x=element_text(size=16, color='black'),
+        axis.title=element_blank(),
+        legend.position = 'none',
+        strip.text.y = element_text(hjust=0,vjust = 1,angle=180, color='black'))+
+    coord_flip()+
+    labs(title="In-hospital Mortality (%)")+
+  theme(plot.title = element_text(hjust=0.5))
+hosp.plot
+
+ggsave("Forest_plot_hosp.png", hosp.plot, dpi=600)
+```
+
+
+```{r}
+method.neur <- c('IP Weighting', 'Ps adjustment', 'g-formula')
+beta.neur <- c(1.41, 0.70, 0.79)
+Lower.limit.neur <- c(-2.12, -2.47, -2.21)
+Upper.limit.neur <- c(4.95, 3.86, 3.79)
+df.neur <- data.frame(Method=method.neur, beta=beta.neur,
+                        Lower_limit=Lower.limit.neur, Upper_limit=Upper.limit.neur)
+
+df.neur$Method <- relevel(df.neur$Method, ref='Ps adjustment')
+```
+
+```{r}
+neur.plot = ggplot(data=df.neur,
+    aes(x = Method,y = beta, ymin = Lower_limit, ymax = Upper_limit ))+
+    geom_pointrange(aes(col=Method))+
+    geom_hline(aes(fill=Method),yintercept =0, linetype=2)+
+    xlab("")+
+    ylim(-8, 8)+
+    geom_errorbar(aes(ymin=Lower_limit, ymax=Upper_limit,col=Method),width=0.2,cex=1)+ 
+    theme(plot.title=element_text(size=16, color='black'),
+        axis.text.y=element_text(size=16, color='black'),
+        axis.ticks.y=element_blank(),
+        axis.text.x=element_text(size=16, color='black'),
+        axis.title=element_blank(),
+        legend.position = 'none',
+        strip.text.y = element_text(hjust=0,vjust = 1,angle=180, color='black'))+
+    coord_flip()+
+    labs(title="Neuroligcal Complication Rate (%)")+
+  theme(plot.title = element_text(hjust=0.5))
+neur.plot
+
+ggsave("Forest_plot_neur.png", neur.plot, dpi=600)
+```
+
+
+```{r}
+method.hos.fr <- c('IP Weighting', 'Ps adjustment', 'g-formula')
+beta.hos.fr <- c(1.01, 0.97, 0.95)
+Lower.limit.hos.fr <- c(0.04, 0.06, 0.05)
+Upper.limit.hos.fr <- c(1.98, 1.89, 1.85)
+df.hos.fr <- data.frame(Method=method.hos.fr, beta=beta.hos.fr,
+                        Lower_limit=Lower.limit.hos.fr, Upper_limit=Upper.limit.hos.fr)
+
+df.hos.fr$Method <- relevel(df.hos.fr$Method, ref='Ps adjustment')
+```
+
+```{r}
+hos.fr.plot = ggplot(data=df.hos.fr,
+    aes(x = Method,y = beta, ymin = Lower_limit, ymax = Upper_limit ))+
+    geom_pointrange(aes(col=Method))+
+    geom_hline(aes(fill=Method),yintercept =0, linetype=2)+
+    xlab("")+
+    ylim(-3, 3)+
+    geom_errorbar(aes(ymin=Lower_limit, ymax=Upper_limit,col=Method),width=0.2,cex=1)+ 
+    theme(plot.title=element_text(size=16, color='black'),
+        axis.text.y=element_text(size=16, color='black'),
+        axis.ticks.y=element_blank(),
+        axis.text.x=element_text(size=16, color='black'),
+        axis.title=element_blank(),
+        legend.position = 'none',
+        strip.text.y = element_text(hjust=0,vjust = 1,angle=180, color='black'))+
+    coord_flip()+
+    labs(title="Hospital-Free Days (day)")+
+  theme(plot.title = element_text(hjust=0.5))
+hos.fr.plot
+
+ggsave("Forest_plot_hosp_fr.png", hos.fr.plot, dpi=600)
+```
+
+
+```{r}
+method.ICU.fr <- c('IP Weighting', 'Ps adjustment', 'g-formula')
+beta.ICU.fr <- c(0.67, 0.62, 0.61)
+Lower.limit.ICU.fr <- c(-0.35, -0.32, -0.32)
+Upper.limit.ICU.fr <- c(1.69, 1.56, 1.53)
+df.ICU.fr <- data.frame(Method=method.ICU.fr, beta=beta.ICU.fr,
+                        Lower_limit=Lower.limit.ICU.fr, Upper_limit=Upper.limit.ICU.fr)
+
+df.ICU.fr$Method <- relevel(df.ICU.fr$Method, ref='Ps adjustment')
+```
+
+```{r}
+ICU.fr.plot = ggplot(data=df.ICU.fr,
+    aes(x = Method,y = beta, ymin = Lower_limit, ymax = Upper_limit ))+
+    geom_pointrange(aes(col=Method))+
+    geom_hline(aes(fill=Method),yintercept =0, linetype=2)+
+    xlab("")+
+    ylim(-3, 3)+
+    geom_errorbar(aes(ymin=Lower_limit, ymax=Upper_limit,col=Method),width=0.2,cex=1)+ 
+    theme(plot.title=element_text(size=16, color='black'),
+        axis.text.y=element_text(size=16, color='black'),
+        axis.ticks.y=element_blank(),
+        axis.text.x=element_text(size=16, color='black'),
+        axis.title=element_blank(),
+        legend.position = 'none',
+        strip.text.y = element_text(hjust=0,vjust = 1,angle=180, color='black'))+
+    coord_flip()+
+    labs(title="ICU-Free Days (day)")+
+  theme(plot.title = element_text(hjust=0.5))
+ICU.fr.plot
+
+ggsave("Forest_plot_icu_fr.png", ICU.fr.plot, dpi=600)
+```
+
